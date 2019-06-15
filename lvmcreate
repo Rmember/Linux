@@ -1,0 +1,161 @@
+#!/bin/bash
+
+pvname=$1
+vgname=$2
+lvname=$3
+size=$4
+dir=$5
+filesys=$6
+
+###文档函数
+HELP() {
+cat  <<EOF
+
+---------参数说明------------------
+逻辑卷扩容: \$1,2,3,4 必须4个参数
+逻辑卷创建: \$1,2,3,4,5,6 必须6个参数
+
+pvname=\$1  
+vgname=\$2
+lvname=\$3
+size=\$4    ##设置(扩容)lv容量大小格式为(+5G/M/K)
+dir=\$5     ##文件系统挂载点
+filesys=\$6 ##文件系统类型(ext4/xfs)
+
+### -s          扫描磁盘
+### -h[--help]  参数说明
+EOF
+}
+
+##lv扩容函数
+EXPAND() {
+pvcreate ${pvname}
+vgextend ${vgname} ${pvname}
+lvextend -L +${size} /dev/${vgname}/${lvname}
+
+filesys=`df -T|grep "${vgname}-${lvname}"|awk '{print $2}'`
+if [ ${filesys} == "xfs" ];then
+xfs_growfs /dev/${vgname}/${lvname}
+else
+resize2fs /dev/${vgname}/${lvname}
+fi
+}
+
+
+#EXIT() {
+#if [ $? -ne 0 ];then
+#reason=`echo $@`
+#echo ${reason}
+#exit 1
+#fi
+#}
+
+
+#lv创建函数
+CREEATE() {
+pvcreate ${pvname}
+vgcreate ${vgname} ${pvname}
+lvcreate -L +${size} -n ${lvname} ${vgname}
+
+if [ ${filesys} == "xfs" ];then
+mkfs.xfs /dev/${vgname}/${lvname}
+elif [ ${filesys} == "ext4" ];then
+mkfs.ext4 /dev/${vgname}/${lvname}
+else
+echo Please enter the correct filesystem name!
+exit 1
+fi
+mkdir ${dir}
+if [ $? -ne 0 ];then
+while true
+do
+
+read -p "File exists ,are you sure mount to ${dir} ?[y/n]" input
+if [ ${input} == "n" -o  ${input} == "no" ];then
+exit 1
+elif [ ${input} == "y" -o  ${input} == "yes" ];then
+break
+else
+echo Please enter the correct characters!
+fi
+
+done
+fi
+
+expand=1
+mount /dev/mapper/${vgname}-${lvname} ${dir}
+if [ $? -ne 0 ];then
+while true
+do
+echo /dev/mapper/${vgname}-${lvname} is already mounted on ${dir}.
+read -p "Do you want to expand the file system?[y/n]" input
+if [ ${input} == "n" -o  ${input} == "no" ];then
+break
+elif [ ${input} == "y" -o  ${input} == "yes" ];then
+expand=0
+break
+else
+echo Please enter the correct characters!
+fi
+done
+fi
+
+if [ ${expand} -eq 0 ];then
+EXPAND
+fi
+
+
+if grep "${dir}" /etc/fstab;then
+exit 0
+else
+echo "/dev/mapper/${vgname}-${lvname}  ${dir}                    ${filesys}    defaults        0 0" >> /etc/fstab
+fi
+}
+
+
+
+###帮助参数及磁盘扫描
+if [ $# -eq 1 ];then
+if [ $1 == "-s" ];then
+HOST=$(ls /sys/class/scsi_host/)
+for i in ${HOST[@]}
+do
+echo "- - -" > /sys/class/scsi_host/${i}/scan
+done
+fi
+
+if [ $1 == "-h" -o $1 == "--help" ];then
+HELP
+fi
+if [ ! $1 == "-h" -o ! $1 == "--help" -o ! $1 == "-s" ];then
+HELP
+fi
+fi
+
+if [ $# -ne 6 -a $# -ne 1  -a $# -ne 4 ];then
+HELP
+fi
+
+
+
+
+
+###lv扩容
+if [ $# -eq 4 ];then
+EXPAND
+fi
+
+###lv创建
+if [ $# -eq 6 ];then
+CREEATE
+fi
+
+
+###自定义执行报错打印信息函数
+#EXIT() {
+#if [ $? -ne 0 ];then
+#reason=`echo $@`
+#echo ${reason}
+#exit 1
+#fi
+#}
